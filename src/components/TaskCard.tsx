@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { Task } from '@/types'
 import { Checkbox } from './ui/Checkbox'
 import { TagBadge } from './ui/TagBadge'
@@ -21,7 +21,18 @@ export function TaskCard({ task, onEdit, showSubTasks = true, draggable = true }
   const toggleTaskComplete = useAppStore((s) => s.toggleTaskComplete)
   const deleteTask = useAppStore((s) => s.deleteTask)
   const toggleSubTask = useAppStore((s) => s.updateSubTask)
+  const highlightedTaskId = useAppStore((s) => s.highlightedTaskId)
   const [expanded, setExpanded] = useState(false)
+  const [isHighlight, setIsHighlight] = useState(false)
+
+  useEffect(() => {
+    if (highlightedTaskId === task.id) {
+      setIsHighlight(true)
+      setExpanded(true)
+      const t = setTimeout(() => setIsHighlight(false), 2500)
+      return () => clearTimeout(t)
+    }
+  }, [highlightedTaskId, task.id])
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = draggable
     ? useSortable({ id: task.id })
@@ -41,12 +52,14 @@ export function TaskCard({ task, onEdit, showSubTasks = true, draggable = true }
 
   return (
     <div
+      id={`task-${task.id}`}
       ref={setNodeRef}
       style={style}
       className={cn(
         'group rounded-xl border bg-white p-4 shadow-sm transition-all hover:shadow-md',
         overdue ? 'border-red-200 bg-red-50/30' : 'border-gray-200',
-        task.completed && 'opacity-60'
+        task.completed && 'opacity-60',
+        isHighlight && 'ring-2 ring-primary-400 ring-offset-2 animate-pulse'
       )}
     >
       <div className="flex items-start gap-3">

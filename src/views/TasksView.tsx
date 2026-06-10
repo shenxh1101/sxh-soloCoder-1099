@@ -33,6 +33,7 @@ export function TasksView() {
   const setSearchQuery = useAppStore((s) => s.setSearchQuery)
   const batchUpdateTasks = useAppStore((s) => s.batchUpdateTasks)
   const archiveTasks = useAppStore((s) => s.archiveTasks)
+  const showToast = useAppStore((s) => s.showToast)
 
   const priorityWeight: Record<Priority, number> = { high: 3, medium: 2, low: 1 }
 
@@ -94,18 +95,42 @@ export function TasksView() {
 
   const handleBatchApply = () => {
     const updates: Partial<import('@/types').Task> = {}
-    if (batchTagIds.length > 0) updates.tagIds = batchTagIds
-    if (batchDueDate) updates.dueDate = new Date(batchDueDate).toISOString()
-    if (batchPriority) updates.priority = batchPriority
+    const parts: string[] = []
+    if (batchTagIds.length > 0) {
+      updates.tagIds = batchTagIds
+      const tagNames = batchTagIds.map((id) => tags.find((t) => t.id === id)?.name).filter(Boolean).join('、')
+      parts.push(`标签：${tagNames}`)
+    }
+    if (batchDueDate) {
+      updates.dueDate = new Date(batchDueDate).toISOString()
+      parts.push(`截止：${batchDueDate}`)
+    }
+    if (batchPriority) {
+      updates.priority = batchPriority
+      const label = batchPriority === 'high' ? '高' : batchPriority === 'medium' ? '中' : '低'
+      parts.push(`优先级：${label}`)
+    }
 
     if (Object.keys(updates).length > 0) {
-      batchUpdateTasks(Array.from(selectedIds), updates)
+      const count = batchUpdateTasks(Array.from(selectedIds), updates)
+      showToast(`已批量修改 ${count} 个任务（${parts.join('，')}）`)
+    } else {
+      showToast('未选择任何修改项', 'info')
     }
     clearSelection()
   }
 
   const handleBatchArchive = () => {
-    archiveTasks(Array.from(selectedIds))
+    const selectedCompletedCount = Array.from(selectedIds).filter((id) => {
+      const t = tasks.find((task) => task.id === id)
+      return t?.completed
+    }).length
+    if (selectedCompletedCount === 0) {
+      showToast('选中的任务中没有已完成项', 'info')
+      return
+    }
+    const count = archiveTasks(Array.from(selectedIds))
+    showToast(`已归档 ${count} 个已完成任务`)
     clearSelection()
   }
 
@@ -148,6 +173,12 @@ export function TasksView() {
             />
             <span className="text-sm font-medium text-primary-700">
               已选 {selectedIds.size} 项
+              {selectedIds.size > 0 && (() => {
+                const completed = Array.from(selectedIds).filter((id) => tasks.find((t) => t.id === id)?.completed).length
+                const pending = selectedIds.size - completed
+                if (completed > 0 && pending > 0) return `（${completed} 已完成 / ${pending} 待办）`
+                return ''
+              })()}
             </span>
             {selectedIds.size > 0 && (
               <>

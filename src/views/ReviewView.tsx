@@ -11,6 +11,8 @@ import {
   eachDayOfInterval,
   startOfMonth,
   endOfMonth,
+  subWeeks,
+  isWithinInterval,
 } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { getTodayStr } from '@/utils/date'
@@ -30,11 +32,17 @@ import {
   ChevronRight,
   Clock,
   ArrowLeft,
+  Download,
+  Copy,
+  TrendingDown,
+  Minus,
 } from 'lucide-react'
 import type { DailyReview, Task, FocusSession } from '@/types'
 import { cn } from '@/utils/cn'
 
 type Period = 'week' | 'month'
+
+const TREND_WEEKS = 4
 
 export function ReviewView() {
   const [period, setPeriod] = useState<Period>('week')
@@ -42,12 +50,16 @@ export function ReviewView() {
   const [reviewMood, setReviewMood] = useState<DailyReview['mood']>(undefined)
   const [reviewSaved, setReviewSaved] = useState(false)
   const [drillTagId, setDrillTagId] = useState<string | null>(null)
+  const [showTrend, setShowTrend] = useState(true)
 
   const tasks = useAppStore((s) => s.tasks)
   const tags = useAppStore((s) => s.tags)
   const focusSessions = useAppStore((s) => s.focusSessions)
   const reviews = useAppStore((s) => s.reviews)
   const addReview = useAppStore((s) => s.addReview)
+  const reviewFocusDate = useAppStore((s) => s.reviewFocusDate)
+  const showToast = useAppStore((s) => s.showToast)
+  const setReviewFocusDate = useAppStore((s) => s.setReviewFocusDate)
 
   const todayReview = reviews.find((r) => r.date === getTodayStr())
 
@@ -57,6 +69,13 @@ export function ReviewView() {
       setReviewMood(todayReview.mood)
     }
   }, [todayReview])
+
+  useEffect(() => {
+    if (reviewFocusDate) {
+      const t = setTimeout(() => setReviewFocusDate(null), 2500)
+      return () => clearTimeout(t)
+    }
+  }, [reviewFocusDate, setReviewFocusDate])
 
   const dateRange = useMemo(() => {
     const now = new Date()
@@ -101,6 +120,59 @@ export function ReviewView() {
       }),
     [tasks, dateRange]
   )
+
+  const weeklyTrends = useMemo(() => {
+    const now = new Date()
+    const weeks: {
+      label: string
+      start: Date
+      end: Date
+      tagStats: { tagId: string; tagName: string; color: string; completed: number; focusMinutes: number }[]
+    }[] = []
+
+    for (let i = TREND_WEEKS - 1; i >= 0; i--) {
+      const weekStart = startOfWeek(subWeeks(now, i), { weekStartsOn: 1 })
+      const weekEnd = endOfWeek(subWeeks(now, i), { weekStartsOn: 1 })
+      const label = i === 0 ? '本周' : `${format(weekStart, 'M/d')}-${format(weekEnd, 'M/d')}`
+
+      const weekSessions = focusSessions.filter(
+        (s) =>
+          s.type === 'focus' &&
+          s.completed &&
+          new Date(s.endTime) >= weekStart &&
+          new Date(s.endTime) <= weekEnd
+      )
+      const weekCompleted = tasks.filter(
+        (t) =>
+          t.completed &&
+          t.completedAt &&
+          isWithinInterval(new Date(t.completedAt), { start: weekStart, end: weekEnd })
+      )
+
+      const tagStats = tags.map((tag) => {
+        const completed = weekCompleted.filter((t) => t.tagIds.includes(tag.id)).length
+        const focusMinutes = weekSessions
+          .filter((s) => {
+            const task = tasks.find((t) => t.id === s.taskId)
+            return task?.tagIds.includes(tag.id)
+          })
+          .reduce((acc, s) => acc + Math.round(s.duration / 60), 0)
+        return {
+          tagId: tag.id,
+          tagName: tag.name,
+          color: tag.color,
+          completed,
+          focusMinutes,
+        }
+      }).filter((s) => s.completed > 0 || s.focusMinutes > 0)
+
+      weeks.push({ label, start: weekStart, end: weekEnd, tagStats })
+    }
+
+    return weeks
+  }, [focusSessions, tasks, tags])
+
+  const trendTagId = drillTagId
 
   const stats = useMemo(() => {
     const completedCount = periodTasks.filter((t) => t.completed).length
@@ -199,6 +271,97 @@ export function ReviewView() {
 
   const maxTagFocus = Math.max(...stats.tagStats.map((s) => s.focusMinutes), 1)
 
+  const generateMarkdown = () => {
+    const weekStart = format(dateRange.start, 'yyyy年M月d日')
+    const weekEnd = format(dateRange.end, 'yyyy年M月d日')
+    const lines: string[] = []
+    lines.push(`# 本周效率复盘（${weekStart} - ${weekEnd}）`)
+    lines.push('')
+    lines.push('## 概览')
+    lines.push(`- 完成任务：**${stats.completedCount}** / ${stats.totalCount} 个（完成率 ${stats.completionRate}%）`)
+    lines.push(`- 专注番茄：**${stats.pomodoroCount}** 个，累计 ${formatHours(stats.totalFocusMinutes)}`)
+    lines.push('')
+
+    lines.push('## 完成任务')
+    const completedTasks = periodTasks.filter((t) => t.completed)
+    if (completedTasks.length === 0) {
+      lines.push('_本周无完成任务_')
+    } else {
+      completedTasks.forEach((t) => {
+        const tagNames = t.tagIds.map((id) => tags.find((tg) => tg.id === id)?.name).filter(Boolean).join('、')
+        const when = t.completedAt ? format(new Date(t.completedAt), 'M月d日') : ''
+        const pr = t.priority === 'high' ? '【高】' : t.priority === 'medium' ? '【中】' : '【低】'
+        lines.push(`- ${pr}${t.title}${tagNames ? `（${tagNames}）` : ''}${when ? ` · ${when}` : ''}`)
+      })
+    }
+    lines.push('')
+
+    lines.push('## 专注记录')
+    if (periodFocus.length === 0) {
+      lines.push('_本周无专注记录_')
+    } else {
+      stats.tagStats.forEach((ts) => {
+        lines.push(`### ${ts.tag.name}（${formatHours(ts.focusMinutes)}）`)
+        ts.sessions.forEach((s) => {
+          const task = tasks.find((t) => t.id === s.taskId)
+          const when = format(new Date(s.startTime), 'M月d日 HH:mm')
+          lines.push(`- ${when} · ${task?.title || '无关联任务'} · ${Math.round(s.duration / 60)} 分钟`)
+        })
+        lines.push('')
+      })
+    }
+
+    lines.push('## 每日回顾')
+    const periodReviews = reviews.filter(
+      (r) => new Date(r.date) >= dateRange.start && new Date(r.date) <= dateRange.end
+    )
+    if (periodReviews.length === 0) {
+      lines.push('_本周无回顾记录_')
+    } else {
+      periodReviews
+        .slice()
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+        .forEach((r) => {
+          const mood = moodEmojis.find((m) => m.value === r.mood)
+          lines.push(`### ${format(new Date(r.date), 'M月d日 EEEE', { locale: zhCN })}${mood ? ` · ${mood.label}` : ''}`)
+          if (r.content) {
+            lines.push(r.content.split('\n').map((l) => `> ${l}`).join('\n'))
+          }
+          lines.push('')
+        })
+    }
+
+    return lines.join('\n')
+  }
+
+  const handleCopyMarkdown = async () => {
+    const md = generateMarkdown()
+    try {
+      await navigator.clipboard.writeText(md)
+      showToast('已复制 Markdown 到剪贴板')
+    } catch {
+      showToast('复制失败，请手动选择复制', 'info')
+    }
+  }
+
+  const handleDownloadMarkdown = () => {
+    const md = generateMarkdown()
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `周报-${format(dateRange.start, 'yyyyMMdd')}-${format(dateRange.end, 'yyyyMMdd')}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+    showToast('已下载 Markdown 文件')
+  }
+
+  const renderTrendIcon = (delta: number) => {
+    if (delta > 0) return <TrendingUp size={12} className="text-green-500" />
+    if (delta < 0) return <TrendingDown size={12} className="text-red-500" />
+    return <Minus size={12} className="text-gray-400" />
+  }
+
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="mx-auto max-w-5xl">
@@ -207,19 +370,27 @@ export function ReviewView() {
             <h1 className="text-2xl font-bold text-gray-900">复盘统计</h1>
             <p className="mt-1 text-gray-500">回顾你的时间都花在哪里了</p>
           </div>
-          <div className="flex gap-2 rounded-xl bg-gray-100 p-1">
-            {(['week', 'month'] as Period[]).map((p) => (
-              <button
-                key={p}
-                onClick={() => setPeriod(p)}
-                className={cn(
-                  'rounded-lg px-4 py-1.5 text-sm font-medium transition-all',
-                  period === p ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                )}
-              >
-                {p === 'week' ? '本周' : '本月'}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <div className="flex gap-2 rounded-xl bg-gray-100 p-1 mr-2">
+              {(['week', 'month'] as Period[]).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setPeriod(p)}
+                  className={cn(
+                    'rounded-lg px-4 py-1.5 text-sm font-medium transition-all',
+                    period === p ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  )}
+                >
+                  {p === 'week' ? '本周' : '本月'}
+                </button>
+              ))}
+            </div>
+            <Button size="sm" variant="secondary" onClick={handleCopyMarkdown} icon={<Copy size={14} />}>
+              复制 Markdown
+            </Button>
+            <Button size="sm" variant="secondary" onClick={handleDownloadMarkdown} icon={<Download size={14} />}>
+              导出
+            </Button>
           </div>
         </div>
 
@@ -280,6 +451,65 @@ export function ReviewView() {
                 {drillData.completed}/{drillData.total} 完成 · {formatHours(drillData.focusMinutes)} 专注
               </span>
             </div>
+
+            {showTrend && (
+              <div className="mb-6 rounded-lg bg-gray-50 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <h4 className="text-sm font-semibold text-gray-700">
+                    最近 {TREND_WEEKS} 周趋势
+                  </h4>
+                  <button
+                    onClick={() => setShowTrend(false)}
+                    className="text-xs text-gray-500 hover:text-gray-700"
+                  >
+                    收起
+                  </button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-xs text-gray-500">
+                        <th className="pb-2 text-left font-normal">周</th>
+                        <th className="pb-2 text-right font-normal">完成任务</th>
+                        <th className="pb-2 text-right font-normal">专注时长</th>
+                        <th className="pb-2 text-right font-normal">环比</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {weeklyTrends.map((w, idx) => {
+                        const ts = w.tagStats.find((s) => s.tagId === drillData.tag.id)
+                        const prev = idx > 0
+                          ? weeklyTrends[idx - 1].tagStats.find((s) => s.tagId === drillData.tag.id)
+                          : null
+                        const delta = ts && prev ? ts.completed - prev.completed : 0
+                        return (
+                          <tr key={w.label} className="border-t border-gray-100">
+                            <td className="py-2 text-gray-700">{w.label}</td>
+                            <td className="py-2 text-right text-gray-900 font-medium">
+                              {ts?.completed ?? 0}
+                            </td>
+                            <td className="py-2 text-right text-gray-700">
+                              {formatHours(ts?.focusMinutes ?? 0)}
+                            </td>
+                            <td className="py-2 text-right flex items-center justify-end gap-1">
+                              {idx > 0 ? renderTrendIcon(delta) : null}
+                              {idx > 0 && (
+                                <span className={cn(
+                                  'text-xs',
+                                  delta > 0 ? 'text-green-600' : delta < 0 ? 'text-red-600' : 'text-gray-400'
+                                )}>
+                                  {delta > 0 ? `+${delta}` : delta}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             <div className="mb-6">
               <h4 className="mb-3 text-sm font-semibold text-gray-700">相关任务</h4>
@@ -379,6 +609,57 @@ export function ReviewView() {
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {showTrend && stats.tagStats.length > 0 && (
+              <div className="mb-6 rounded-xl border border-gray-200 bg-white p-6">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="font-semibold text-gray-900">标签周趋势对比</h3>
+                  <button
+                    onClick={() => setShowTrend(false)}
+                    className="text-xs text-gray-500 hover:text-gray-700"
+                  >
+                    收起
+                  </button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-xs text-gray-500 border-b border-gray-100">
+                        <th className="pb-2 text-left font-normal">标签</th>
+                        {weeklyTrends.map((w) => (
+                          <th key={w.label} className="pb-2 text-right font-normal whitespace-nowrap px-2">
+                            {w.label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stats.tagStats.map(({ tag }) => (
+                        <tr key={tag.id} className="border-b border-gray-50 hover:bg-gray-50">
+                          <td className="py-2">
+                            <div className="flex items-center gap-2">
+                              <TagBadge tagId={tag.id} size="sm" />
+                              <span className="text-xs text-gray-500 font-medium">完成/专注</span>
+                            </div>
+                          </td>
+                          {weeklyTrends.map((w) => {
+                            const ts = w.tagStats.find((s) => s.tagId === tag.id)
+                            return (
+                              <td key={w.label} className="py-2 text-right px-2 whitespace-nowrap">
+                                <div className="text-xs font-medium text-gray-900">{ts?.completed ?? 0}</div>
+                                <div className="text-[10px] text-gray-400">
+                                  {formatHours(ts?.focusMinutes ?? 0)}
+                                </div>
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}
@@ -503,8 +784,16 @@ export function ReviewView() {
               {reviews.slice().reverse().slice(0, 5).map((review) => {
                 const mood = moodEmojis.find((m) => m.value === review.mood)
                 const MoodIcon = mood?.icon
+                const isFocus = reviewFocusDate === review.date
                 return (
-                  <div key={review.date} className="rounded-lg bg-gray-50 p-4">
+                  <div
+                    id={`review-${review.date}`}
+                    key={review.date}
+                    className={cn(
+                      'rounded-lg bg-gray-50 p-4 transition-all',
+                      isFocus && 'ring-2 ring-amber-400 ring-offset-2 animate-pulse'
+                    )}
+                  >
                     <div className="mb-2 flex items-center justify-between">
                       <span className="text-sm font-medium text-gray-700">
                         {format(new Date(review.date), 'yyyy年M月d日 EEEE', { locale: zhCN })}

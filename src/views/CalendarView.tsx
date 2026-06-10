@@ -18,7 +18,9 @@ import { useAppStore } from '@/store/appStore'
 import { TaskCard } from '@/components/TaskCard'
 import { TaskEditorModal } from '@/components/TaskEditorModal'
 import { Button } from '@/components/ui/Button'
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Plus, GripVertical } from 'lucide-react'
+import { TagBadge } from '@/components/ui/TagBadge'
+import { PriorityBadge } from '@/components/ui/PriorityBadge'
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Plus, GripVertical, CheckCircle2 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import type { Task } from '@/types'
 
@@ -31,7 +33,7 @@ function DraggableTask({ task, onEdit }: { task: Task; onEdit: () => void }) {
   })
 
   const style = transform
-    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, opacity: isDragging ? 0.5 : 1 }
+    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, opacity: isDragging ? 0.5 : 1, zIndex: isDragging ? 50 : undefined }
     : undefined
 
   return (
@@ -48,37 +50,72 @@ function DraggableTask({ task, onEdit }: { task: Task; onEdit: () => void }) {
   )
 }
 
+function MiniDraggableTask({ task }: { task: Task }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `minitask-${task.id}`,
+    data: { taskId: task.id },
+  })
+
+  const style = transform
+    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, opacity: isDragging ? 0.4 : 1, zIndex: isDragging ? 50 : undefined }
+    : undefined
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className={cn(
+        'cursor-grab active:cursor-grabbing truncate rounded px-1.5 py-0.5 text-[11px] font-medium',
+        task.completed
+          ? 'bg-green-100 text-green-700 line-through'
+          : task.priority === 'high'
+            ? 'bg-red-100 text-red-700'
+            : task.priority === 'medium'
+              ? 'bg-amber-100 text-amber-700'
+              : 'bg-primary-100 text-primary-700'
+      )}
+      title={task.title}
+    >
+      {task.completed && <CheckCircle2 size={10} className="inline mr-0.5 -mt-0.5" />}
+      {task.title}
+    </div>
+  )
+}
+
 function DroppableDateCell({
   date,
   isCurrentMonth,
   isSelected,
   isTodayDate,
-  taskCount,
-  completedCount,
+  dayTasks,
   onClick,
-  children,
+  onTaskClick,
 }: {
   date: Date
   isCurrentMonth: boolean
   isSelected: boolean
   isTodayDate: boolean
-  taskCount: number
-  completedCount: number
+  dayTasks: Task[]
   onClick: () => void
-  children?: React.ReactNode
+  onTaskClick: (task: Task) => void
 }) {
   const { isOver, setNodeRef } = useDroppable({
     id: `date-${format(date, 'yyyy-MM-dd')}`,
     data: { date: format(date, 'yyyy-MM-dd') },
   })
 
+  const shownTasks = dayTasks.slice(0, 3)
+  const extraCount = dayTasks.length - shownTasks.length
+
   return (
     <div
       ref={setNodeRef}
       onClick={onClick}
       className={cn(
-        'group relative flex flex-col rounded-lg p-2 text-left transition-all',
-        'border min-h-[80px]',
+        'group relative flex flex-col rounded-lg p-1.5 text-left transition-all min-h-[88px]',
+        'border',
         isSelected
           ? 'border-primary-500 bg-primary-50 ring-2 ring-primary-200'
           : 'border-gray-100 hover:border-gray-200 hover:bg-gray-50',
@@ -88,29 +125,24 @@ function DroppableDateCell({
     >
       <span
         className={cn(
-          'text-sm font-medium',
-          isTodayDate && 'flex h-6 w-6 items-center justify-center rounded-full bg-primary-600 text-white',
+          'text-xs font-medium mb-1',
+          isTodayDate && 'flex h-5 w-5 items-center justify-center rounded-full bg-primary-600 text-white',
           !isTodayDate && isSelected && 'text-primary-700',
           !isTodayDate && !isSelected && 'text-gray-700'
         )}
       >
         {format(date, 'd')}
       </span>
-      {taskCount > 0 && (
-        <div className="mt-1 flex gap-0.5">
-          {taskCount <= 3 ? (
-            Array.from({ length: taskCount }).map((_, i) => (
-              <span
-                key={i}
-                className={cn('h-1.5 w-1.5 rounded-full', i < completedCount ? 'bg-green-500' : 'bg-primary-500')}
-              />
-            ))
-          ) : (
-            <span className="text-xs text-gray-500">+{taskCount}</span>
-          )}
-        </div>
-      )}
-      {children}
+      <div className="space-y-1 flex-1" onClick={(e) => e.stopPropagation()}>
+        {shownTasks.map((t) => (
+          <div key={t.id} className="flex items-center gap-1">
+            <MiniDraggableTask task={t} />
+          </div>
+        ))}
+        {extraCount > 0 && (
+          <div className="text-[10px] text-gray-500 pl-0.5">+{extraCount} 更多</div>
+        )}
+      </div>
     </div>
   )
 }
@@ -133,39 +165,26 @@ export function CalendarView() {
 
   const tasksForDate = useMemo(() => getTasksByDate(selectedDate), [selectedDate, getTasksByDate])
 
-  const getTaskCountForDate = (date: Date): { total: number; completed: number } => {
-    const dateStr = format(date, 'yyyy-MM-dd')
-    const dayTasks = tasks.filter((t) => {
+  const getTasksForDay = (dateStr: string): Task[] => {
+    return tasks.filter((t) => {
+      if (t.archived) return false
       if (t.completed) {
         return t.completedAt ? format(new Date(t.completedAt), 'yyyy-MM-dd') === dateStr : false
       }
       return t.dueDate ? format(new Date(t.dueDate), 'yyyy-MM-dd') === dateStr : false
     })
-    return {
-      total: dayTasks.length,
-      completed: dayTasks.filter((t) => t.completed).length,
-    }
   }
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     if (!over) return
 
-    const taskId = String(active.id).replace('task-', '')
+    const taskId = String(active.id).replace('minitask-', '').replace('task-', '')
     const targetDate = String(over.id).replace('date-', '')
 
     if (taskId && targetDate) {
       moveTaskToDate(taskId, new Date(targetDate).toISOString())
     }
-  }
-
-  const buildTasksForDay = (dateStr: string) => {
-    return tasks.filter((t) => {
-      if (t.completed) {
-        return t.completedAt ? format(new Date(t.completedAt), 'yyyy-MM-dd') === dateStr : false
-      }
-      return t.dueDate ? format(new Date(t.dueDate), 'yyyy-MM-dd') === dateStr : false
-    }).slice(0, 2)
   }
 
   return (
@@ -212,13 +231,13 @@ export function CalendarView() {
                   </div>
                 ))}
               </div>
-              <div className="flex-1 grid grid-cols-7 grid-rows-6 gap-1 overflow-hidden">
+              <div className="flex-1 grid grid-cols-7 grid-rows-6 gap-1 overflow-y-auto">
                 {calendarDays.map((day, idx) => {
                   const dateStr = format(day, 'yyyy-MM-dd')
                   const isCurrentMonth = isSameMonth(day, currentMonth)
                   const isSelected = isSameDay(day, new Date(selectedDate))
                   const isTodayDate = isToday(day)
-                  const { total, completed } = getTaskCountForDate(day)
+                  const dayTasks = getTasksForDay(dateStr)
 
                   return (
                     <DroppableDateCell
@@ -227,9 +246,9 @@ export function CalendarView() {
                       isCurrentMonth={isCurrentMonth}
                       isSelected={isSelected}
                       isTodayDate={isTodayDate}
-                      taskCount={total}
-                      completedCount={completed}
+                      dayTasks={dayTasks}
                       onClick={() => setSelectedDate(dateStr)}
+                      onTaskClick={(t) => { setEditingTask(t); setShowEditor(true) }}
                     />
                   )
                 })}

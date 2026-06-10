@@ -13,19 +13,26 @@ interface AppState {
   reviews: DailyReview[]
   searchQuery: string
   activeTagIds: string[]
+  highlightedTaskId: string | null
+  reviewFocusDate: string | null
+  toast: { message: string; type: 'success' | 'info' } | null
 
   setCurrentView: (view: ViewType) => void
   setSearchQuery: (query: string) => void
   toggleActiveTag: (tagId: string) => void
   clearActiveTags: () => void
+  setHighlightedTaskId: (id: string | null) => void
+  setReviewFocusDate: (date: string | null) => void
+  showToast: (message: string, type?: 'success' | 'info') => void
+  clearToast: () => void
 
   addTask: (task: Omit<Task, 'id' | 'createdAt' | 'completed' | 'order' | 'archived'> & { subTasks?: SubTask[] }) => void
   updateTask: (id: string, updates: Partial<Task>) => void
   deleteTask: (id: string) => void
   toggleTaskComplete: (id: string) => void
   reorderTasks: (taskIds: string[]) => void
-  batchUpdateTasks: (ids: string[], updates: Partial<Task>) => void
-  archiveTasks: (ids: string[]) => void
+  batchUpdateTasks: (ids: string[], updates: Partial<Task>) => number
+  archiveTasks: (ids: string[]) => number
   moveTaskToDate: (id: string, newDueDate: string) => void
 
   addSubTask: (taskId: string, title: string) => void
@@ -94,7 +101,12 @@ function getNextOccurrence(baseDate: string, repeat: RepeatFrequency): string {
 }
 
 function persist(state: any) {
-  storage.set(STORAGE_KEY, state)
+  storage.set(STORAGE_KEY, {
+    tasks: state.tasks,
+    tags: state.tags,
+    focusSessions: state.focusSessions,
+    reviews: state.reviews,
+  })
 }
 
 export const useAppStore = create<AppState>((set, get) => {
@@ -108,6 +120,9 @@ export const useAppStore = create<AppState>((set, get) => {
     reviews: initial.reviews || [],
     searchQuery: '',
     activeTagIds: [],
+    highlightedTaskId: null,
+    reviewFocusDate: null,
+    toast: null,
 
     setCurrentView: (view) => set({ currentView: view }),
     setSearchQuery: (query) => set({ searchQuery: query }),
@@ -118,6 +133,13 @@ export const useAppStore = create<AppState>((set, get) => {
           : [...state.activeTagIds, tagId],
       })),
     clearActiveTags: () => set({ activeTagIds: [] }),
+    setHighlightedTaskId: (id) => set({ highlightedTaskId: id }),
+    setReviewFocusDate: (date) => set({ reviewFocusDate: date }),
+    showToast: (message, type = 'success') => {
+      set({ toast: { message, type } })
+      setTimeout(() => set({ toast: null }), 2500)
+    },
+    clearToast: () => set({ toast: null }),
 
     addTask: (taskData) => {
       const { subTasks: inputSubTasks, ...rest } = taskData
@@ -209,23 +231,35 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     batchUpdateTasks: (ids, updates) => {
+      let updatedCount = 0
       set((state) => {
-        const tasks = state.tasks.map((t) =>
-          ids.includes(t.id) ? { ...t, ...updates } : t
-        )
+        const tasks = state.tasks.map((t) => {
+          if (ids.includes(t.id)) {
+            updatedCount++
+            return { ...t, ...updates }
+          }
+          return t
+        })
         persist({ ...state, tasks })
         return { tasks }
       })
+      return updatedCount
     },
 
     archiveTasks: (ids) => {
+      let archivedCount = 0
       set((state) => {
-        const tasks = state.tasks.map((t) =>
-          ids.includes(t.id) ? { ...t, archived: true } : t
-        )
+        const tasks = state.tasks.map((t) => {
+          if (ids.includes(t.id) && t.completed) {
+            archivedCount++
+            return { ...t, archived: true }
+          }
+          return t
+        })
         persist({ ...state, tasks })
         return { tasks }
       })
+      return archivedCount
     },
 
     moveTaskToDate: (id, newDueDate) => {

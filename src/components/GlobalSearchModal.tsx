@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { useAppStore } from '@/store/appStore'
 import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
-import { Search, FileText, CheckCircle2, Circle, PenLine, X } from 'lucide-react'
+import { Search, CheckCircle2, Circle, PenLine, X } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import type { ViewType } from '@/types'
 
@@ -28,6 +28,10 @@ export function GlobalSearchModal({ open, onClose }: SearchModalProps) {
   const tasks = useAppStore((s) => s.tasks)
   const reviews = useAppStore((s) => s.reviews)
   const setCurrentView = useAppStore((s) => s.setCurrentView)
+  const setSearchQuery = useAppStore((s) => s.setSearchQuery)
+  const clearActiveTags = useAppStore((s) => s.clearActiveTags)
+  const setHighlightedTaskId = useAppStore((s) => s.setHighlightedTaskId)
+  const setReviewFocusDate = useAppStore((s) => s.setReviewFocusDate)
 
   useEffect(() => {
     if (open) {
@@ -86,6 +90,27 @@ export function GlobalSearchModal({ open, onClose }: SearchModalProps) {
   }, [results, selectedIndex])
 
   const handleSelect = (result: SearchResult) => {
+    clearActiveTags()
+    setSearchQuery('')
+    if (result.type === 'task') {
+      setHighlightedTaskId(result.id)
+      setTimeout(() => {
+        const el = document.getElementById(`task-${result.id}`)
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }
+        setTimeout(() => setHighlightedTaskId(null), 2500)
+      }, 100)
+    } else if (result.type === 'review') {
+      setReviewFocusDate(result.id)
+      setTimeout(() => {
+        const el = document.getElementById(`review-${result.id}`)
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }
+        setTimeout(() => setReviewFocusDate(null), 2500)
+      }, 100)
+    }
     setCurrentView(result.view)
     onClose()
   }

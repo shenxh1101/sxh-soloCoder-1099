@@ -16,6 +16,9 @@ import {
   BarChart3,
   Sparkles,
   Search,
+  CheckCircle2,
+  Info,
+  X,
 } from 'lucide-react'
 
 const NAV_ITEMS: { view: ViewType; label: string; icon: any }[] = [
@@ -31,6 +34,8 @@ export default function App() {
   const setCurrentView = useAppStore((s) => s.setCurrentView)
   const getOverdueTasks = useAppStore((s) => s.getOverdueTasks)
   const getTodayTasks = useAppStore((s) => s.getTodayTasks)
+  const toast = useAppStore((s) => s.toast)
+  const clearToast = useAppStore((s) => s.clearToast)
   const [searchOpen, setSearchOpen] = useState(false)
 
   useEffect(() => {
@@ -143,7 +148,35 @@ export default function App() {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-hidden">{renderView()}</main>
+      <main className="flex-1 overflow-hidden relative">
+        {renderView()}
+
+        {toast && (
+          <div className="pointer-events-none absolute top-4 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-2">
+            <div
+              className={cn(
+                'pointer-events-auto flex items-center gap-2 rounded-xl px-4 py-3 shadow-lg',
+                toast.type === 'success'
+                  ? 'bg-green-50 border border-green-200 text-green-800'
+                  : 'bg-gray-50 border border-gray-200 text-gray-800'
+              )}
+            >
+              {toast.type === 'success' ? (
+                <CheckCircle2 size={16} className="text-green-600" />
+              ) : (
+                <Info size={16} className="text-gray-600" />
+              )}
+              <span className="text-sm font-medium">{toast.message}</span>
+              <button
+                onClick={clearToast}
+                className="ml-2 rounded p-0.5 text-gray-400 hover:bg-white/60 hover:text-gray-700"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+        )}
+      </main>
 
       <GlobalSearchModal
         open={searchOpen}
