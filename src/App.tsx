@@ -1,9 +1,11 @@
+import { useState, useEffect } from 'react'
 import { useAppStore } from '@/store/appStore'
 import { BoardView } from '@/views/BoardView'
 import { TasksView } from '@/views/TasksView'
 import { CalendarView } from '@/views/CalendarView'
 import { FocusView } from '@/views/FocusView'
 import { ReviewView } from '@/views/ReviewView'
+import { GlobalSearchModal } from '@/components/GlobalSearchModal'
 import type { ViewType } from '@/types'
 import { cn } from '@/utils/cn'
 import {
@@ -13,6 +15,7 @@ import {
   Timer,
   BarChart3,
   Sparkles,
+  Search,
 } from 'lucide-react'
 
 const NAV_ITEMS: { view: ViewType; label: string; icon: any }[] = [
@@ -28,6 +31,18 @@ export default function App() {
   const setCurrentView = useAppStore((s) => s.setCurrentView)
   const getOverdueTasks = useAppStore((s) => s.getOverdueTasks)
   const getTodayTasks = useAppStore((s) => s.getTodayTasks)
+  const [searchOpen, setSearchOpen] = useState(false)
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault()
+        setSearchOpen((v) => !v)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   const overdueCount = getOverdueTasks().length
   const todayPendingCount = getTodayTasks().filter((t) => !t.completed).length
@@ -105,6 +120,19 @@ export default function App() {
           })}
         </nav>
 
+        <div className="px-3 pb-3">
+          <button
+            onClick={() => setSearchOpen(true)}
+            className="flex w-full items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-500 transition-colors hover:border-gray-300 hover:bg-gray-100"
+          >
+            <Search size={16} />
+            <span className="flex-1 text-left">全局搜索...</span>
+            <kbd className="rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] text-gray-400">
+              Ctrl+K
+            </kbd>
+          </button>
+        </div>
+
         <div className="border-t border-gray-100 px-4 py-4">
           <div className="rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 p-4 text-white">
             <p className="text-xs font-medium opacity-80">今日提示</p>
@@ -116,6 +144,11 @@ export default function App() {
       </aside>
 
       <main className="flex-1 overflow-hidden">{renderView()}</main>
+
+      <GlobalSearchModal
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+      />
     </div>
   )
 }

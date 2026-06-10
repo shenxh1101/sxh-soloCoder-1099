@@ -2,8 +2,8 @@ import { useState, useEffect, useMemo } from 'react'
 import { useAppStore } from '@/store/appStore'
 import { Button } from '@/components/ui/Button'
 import { Textarea } from '@/components/ui/Textarea'
-import { Checkbox } from '@/components/ui/Checkbox'
 import { TagBadge } from '@/components/ui/TagBadge'
+import { PriorityBadge } from '@/components/ui/PriorityBadge'
 import {
   format,
   startOfWeek,
@@ -26,8 +26,12 @@ import {
   Laugh,
   PenLine,
   Save,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  ArrowLeft,
 } from 'lucide-react'
-import type { DailyReview } from '@/types'
+import type { DailyReview, Task, FocusSession } from '@/types'
 import { cn } from '@/utils/cn'
 
 type Period = 'week' | 'month'
@@ -37,6 +41,7 @@ export function ReviewView() {
   const [reviewContent, setReviewContent] = useState('')
   const [reviewMood, setReviewMood] = useState<DailyReview['mood']>(undefined)
   const [reviewSaved, setReviewSaved] = useState(false)
+  const [drillTagId, setDrillTagId] = useState<string | null>(null)
 
   const tasks = useAppStore((s) => s.tasks)
   const tags = useAppStore((s) => s.tags)
@@ -69,50 +74,65 @@ export function ReviewView() {
 
   const days = useMemo(() => eachDayOfInterval(dateRange), [dateRange])
 
-  const stats = useMemo(() => {
-    const periodTasks = tasks.filter((t) => {
-      if (t.completed && t.completedAt) {
-        const completedDate = new Date(t.completedAt)
-        return completedDate >= dateRange.start && completedDate <= dateRange.end
-      }
-      if (t.dueDate) {
-        const due = new Date(t.dueDate)
-        return due >= dateRange.start && due <= dateRange.end
-      }
-      return false
-    })
+  const periodFocus = useMemo(
+    () =>
+      focusSessions.filter(
+        (s) =>
+          s.type === 'focus' &&
+          s.completed &&
+          new Date(s.endTime) >= dateRange.start &&
+          new Date(s.endTime) <= dateRange.end
+      ),
+    [focusSessions, dateRange]
+  )
 
+  const periodTasks = useMemo(
+    () =>
+      tasks.filter((t) => {
+        if (t.completed && t.completedAt) {
+          const d = new Date(t.completedAt)
+          return d >= dateRange.start && d <= dateRange.end
+        }
+        if (t.dueDate) {
+          const d = new Date(t.dueDate)
+          return d >= dateRange.start && d <= dateRange.end
+        }
+        return false
+      }),
+    [tasks, dateRange]
+  )
+
+  const stats = useMemo(() => {
     const completedCount = periodTasks.filter((t) => t.completed).length
     const totalCount = periodTasks.length
     const completionRate = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0
-
-    const periodFocus = focusSessions.filter(
-      (s) =>
-        s.type === 'focus' &&
-        s.completed &&
-        new Date(s.endTime) >= dateRange.start &&
-        new Date(s.endTime) <= dateRange.end
-    )
     const totalFocusMinutes = periodFocus.reduce((acc, s) => acc + Math.round(s.duration / 60), 0)
 
-    const tagStats = tags.map((tag) => {
-      const tagTasks = periodTasks.filter((t) => t.tagIds.includes(tag.id))
-      const completedTagTasks = tagTasks.filter((t) => t.completed).length
+    const tagStats = tags
+      .map((tag) => {
+        const tagTasks = periodTasks.filter((t) => t.tagIds.includes(tag.id))
+        const completedTagTasks = tagTasks.filter((t) => t.completed).length
 
-      const tagFocusMinutes = periodFocus
-        .filter((s) => {
-          const task = tasks.find((t) => t.id === s.taskId)
-          return task?.tagIds.includes(tag.id)
-        })
-        .reduce((acc, s) => acc + Math.round(s.duration / 60), 0)
+        const tagFocusMinutes = periodFocus
+          .filter((s) => {
+            const task = tasks.find((t) => t.id === s.taskId)
+            return task?.tagIds.includes(tag.id)
+          })
+          .reduce((acc, s) => acc + Math.round(s.duration / 60), 0)
 
-      return {
-        tag,
-        total: tagTasks.length,
-        completed: completedTagTasks,
-        focusMinutes: tagFocusMinutes,
-      }
-    }).filter((s) => s.total > 0 || s.focusMinutes > 0)
+        return {
+          tag,
+          total: tagTasks.length,
+          completed: completedTagTasks,
+          focusMinutes: tagFocusMinutes,
+          tasks: tagTasks,
+          sessions: periodFocus.filter((s) => {
+            const task = tasks.find((t) => t.id === s.taskId)
+            return task?.tagIds.includes(tag.id)
+          }),
+        }
+      })
+      .filter((s) => s.total > 0 || s.focusMinutes > 0)
 
     const dailyStats = days.map((day) => {
       const dayStr = format(day, 'yyyy-MM-dd')
@@ -131,12 +151,7 @@ export function ReviewView() {
             format(new Date(s.endTime), 'yyyy-MM-dd') === dayStr
         )
         .reduce((acc, s) => acc + Math.round(s.duration / 60), 0)
-      return {
-        date: day,
-        total: dayTasks.length,
-        completed: dayCompleted,
-        focusMinutes: dayFocus,
-      }
+      return { date: day, total: dayTasks.length, completed: dayCompleted, focusMinutes: dayFocus }
     })
 
     const maxDaily = Math.max(...dailyStats.map((d) => d.total), 1)
@@ -153,7 +168,14 @@ export function ReviewView() {
       maxFocus,
       pomodoroCount: periodFocus.length,
     }
-  }, [tasks, tags, focusSessions, days, dateRange])
+  }, [tasks, tags, periodFocus, days, dateRange, focusSessions])
+
+  const drillData = useMemo(() => {
+    if (!drillTagId) return null
+    const ts = stats.tagStats.find((s) => s.tag.id === drillTagId)
+    if (!ts) return null
+    return ts
+  }, [drillTagId, stats.tagStats])
 
   const moodEmojis: { value: NonNullable<DailyReview['mood']>; label: string; icon: any; color: string }[] = [
     { value: 'great', label: '很棒', icon: Laugh, color: '#10b981' },
@@ -163,11 +185,7 @@ export function ReviewView() {
   ]
 
   const handleSaveReview = () => {
-    addReview({
-      date: getTodayStr(),
-      content: reviewContent,
-      mood: reviewMood,
-    })
+    addReview({ date: getTodayStr(), content: reviewContent, mood: reviewMood })
     setReviewSaved(true)
     setTimeout(() => setReviewSaved(false), 2000)
   }
@@ -178,6 +196,8 @@ export function ReviewView() {
     const mins = minutes % 60
     return mins > 0 ? `${hours}小时${mins}分钟` : `${hours} 小时`
   }
+
+  const maxTagFocus = Math.max(...stats.tagStats.map((s) => s.focusMinutes), 1)
 
   return (
     <div className="h-full overflow-y-auto p-6">
@@ -194,9 +214,7 @@ export function ReviewView() {
                 onClick={() => setPeriod(p)}
                 className={cn(
                   'rounded-lg px-4 py-1.5 text-sm font-medium transition-all',
-                  period === p
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
+                  period === p ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                 )}
               >
                 {p === 'week' ? '本周' : '本月'}
@@ -225,10 +243,7 @@ export function ReviewView() {
               <span className="text-3xl font-bold text-gray-900">{stats.completionRate}%</span>
             </div>
             <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-100">
-              <div
-                className="h-full rounded-full bg-primary-500 transition-all"
-                style={{ width: `${stats.completionRate}%` }}
-              />
+              <div className="h-full rounded-full bg-primary-500 transition-all" style={{ width: `${stats.completionRate}%` }} />
             </div>
           </div>
           <div className="rounded-xl border border-gray-200 bg-white p-5">
@@ -252,119 +267,187 @@ export function ReviewView() {
           </div>
         </div>
 
-        <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <div className="rounded-xl border border-gray-200 bg-white p-6">
-            <h3 className="mb-4 font-semibold text-gray-900">每日任务完成</h3>
-            <div className="flex items-end justify-between gap-2 h-40">
-              {stats.dailyStats.map((stat, idx) => {
-                const completedH = stat.total > 0 ? Math.max((stat.completed / stat.total) * 100, 4) : 0
-                const pendingH = stat.total > 0 ? Math.max(((stat.total - stat.completed) / stat.total) * 100, 4) : 0
-                const isToday_ = format(new Date(), 'yyyy-MM-dd') === format(stat.date, 'yyyy-MM-dd')
-                return (
-                  <div key={idx} className="flex flex-1 flex-col items-center gap-2">
-                    <div className="flex h-full w-full flex-col items-end justify-center gap-0.5">
-                      {stat.total > 0 ? (
-                        <>
-                          <div
-                            className={cn(
-                              'w-full max-w-[32px] rounded-t-sm transition-all',
-                              isToday_ ? 'bg-gray-400' : 'bg-gray-300'
-                            )}
-                            style={{ height: `${pendingH}%` }}
-                          />
-                          <div
-                            className={cn(
-                              'w-full max-w-[32px] rounded-b-sm transition-all',
-                              isToday_ ? 'bg-green-500' : 'bg-green-400'
-                            )}
-                            style={{ height: `${completedH}%` }}
-                          />
-                        </>
-                      ) : (
-                        <div className="h-1 w-full max-w-[32px] rounded bg-gray-100" />
-                      )}
-                    </div>
-                    <span className={cn('text-xs', isToday_ ? 'font-semibold text-primary-600' : 'text-gray-500')}>
-                      {format(stat.date, 'd', { locale: zhCN })}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-            <div className="mt-4 flex items-center justify-center gap-4 text-xs text-gray-500">
-              <span className="flex items-center gap-1.5">
-                <span className="h-3 w-3 rounded bg-green-400" /> 已完成
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-3 w-3 rounded bg-gray-300" /> 未完成
-              </span>
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-gray-200 bg-white p-6">
-            <h3 className="mb-4 font-semibold text-gray-900">每日专注时长</h3>
-            <div className="flex items-end justify-between gap-2 h-40">
-              {stats.dailyStats.map((stat, idx) => {
-                const h = stat.focusMinutes > 0 ? Math.max((stat.focusMinutes / stats.maxFocus) * 100, 6) : 2
-                const isToday_ = format(new Date(), 'yyyy-MM-dd') === format(stat.date, 'yyyy-MM-dd')
-                return (
-                  <div key={idx} className="flex flex-1 flex-col items-center gap-2">
-                    <div className="flex h-full w-full items-end justify-center">
-                      <div
-                        className={cn(
-                          'w-full max-w-[32px] rounded-t-md transition-all',
-                          isToday_ ? 'bg-amber-500' : 'bg-amber-300'
-                        )}
-                        style={{ height: `${h}%` }}
-                        title={`${stat.focusMinutes} 分钟`}
-                      />
-                    </div>
-                    <span className={cn('text-xs', isToday_ ? 'font-semibold text-primary-600' : 'text-gray-500')}>
-                      {format(stat.date, 'd', { locale: zhCN })}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-            <div className="mt-4 text-center text-xs text-gray-500">
-              单位：分钟，最高 {stats.maxFocus} 分钟
-            </div>
-          </div>
-        </div>
-
-        {stats.tagStats.length > 0 && (
+        {drillData ? (
           <div className="mb-6 rounded-xl border border-gray-200 bg-white p-6">
-            <h3 className="mb-4 font-semibold text-gray-900">按标签分类</h3>
-            <div className="space-y-4">
-              {stats.tagStats.map(({ tag, total, completed, focusMinutes }) => {
-                const rate = total > 0 ? Math.round((completed / total) * 100) : 0
-                return (
-                  <div key={tag.id}>
-                    <div className="mb-1.5 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <TagBadge tagId={tag.id} size="md" />
-                        <span className="text-sm text-gray-500">{total} 个任务</span>
-                      </div>
-                      <div className="flex items-center gap-4 text-sm">
-                        <span className="text-gray-500">
-                          专注 <span className="font-medium text-gray-900">{formatHours(focusMinutes)}</span>
-                        </span>
-                        <span className="font-medium" style={{ color: tag.color }}>
-                          {rate}%
-                        </span>
-                      </div>
-                    </div>
-                    <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
-                      <div
-                        className="h-full rounded-full transition-all"
-                        style={{ width: `${rate}%`, backgroundColor: tag.color }}
-                      />
-                    </div>
+            <div className="mb-4 flex items-center gap-3">
+              <button onClick={() => setDrillTagId(null)} className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100">
+                <ArrowLeft size={20} />
+              </button>
+              <TagBadge tagId={drillData.tag.id} size="md" />
+              <h3 className="text-lg font-semibold text-gray-900">{drillData.tag.name}详情</h3>
+              <div className="flex-1" />
+              <span className="text-sm text-gray-500">
+                {drillData.completed}/{drillData.total} 完成 · {formatHours(drillData.focusMinutes)} 专注
+              </span>
+            </div>
+
+            <div className="mb-6">
+              <h4 className="mb-3 text-sm font-semibold text-gray-700">相关任务</h4>
+              <div className="space-y-2">
+                {drillData.tasks.map((task: Task) => (
+                  <div key={task.id} className={cn('flex items-center gap-3 rounded-lg border border-gray-100 px-4 py-3', task.completed && 'opacity-60')}>
+                    <CheckCircle2 size={16} className={task.completed ? 'text-green-500' : 'text-gray-300'} />
+                    <span className={cn('flex-1 text-sm font-medium', task.completed && 'line-through text-gray-400')}>
+                      {task.title}
+                    </span>
+                    <PriorityBadge priority={task.priority} />
+                    {task.dueDate && (
+                      <span className="text-xs text-gray-400">{format(new Date(task.dueDate), 'M/d')}</span>
+                    )}
                   </div>
-                )
-              })}
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h4 className="mb-3 text-sm font-semibold text-gray-700">专注记录</h4>
+              {drillData.sessions.length === 0 ? (
+                <p className="text-sm text-gray-400">暂无专注记录</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {drillData.sessions.slice().reverse().map((session: FocusSession) => {
+                    const task = tasks.find((t) => t.id === session.taskId)
+                    return (
+                      <div key={session.id} className="flex items-center justify-between rounded-lg bg-gray-50 px-4 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <Clock size={14} className="text-tomato-400" />
+                          <span className="text-sm text-gray-700">{task?.title || '无关联任务'}</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-xs text-gray-500">
+                          <span>{format(new Date(session.startTime), 'M/d HH:mm')}</span>
+                          <span className="font-medium text-tomato-500">{Math.round(session.duration / 60)}分钟</span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           </div>
+        ) : (
+          <>
+            {stats.tagStats.length > 0 && (
+              <div className="mb-6 rounded-xl border border-gray-200 bg-white p-6">
+                <h3 className="mb-4 font-semibold text-gray-900">按标签分类</h3>
+
+                <div className="mb-6 space-y-4">
+                  {stats.tagStats.map(({ tag, total, completed, focusMinutes }) => {
+                    const rate = total > 0 ? Math.round((completed / total) * 100) : 0
+                    return (
+                      <div
+                        key={tag.id}
+                        className="group cursor-pointer rounded-xl border border-gray-100 p-4 transition-all hover:border-gray-200 hover:shadow-sm"
+                        onClick={() => setDrillTagId(tag.id)}
+                      >
+                        <div className="mb-2 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <TagBadge tagId={tag.id} size="md" />
+                            <span className="text-sm text-gray-500">{total} 个任务 · 完成 {rate}%</span>
+                          </div>
+                          <div className="flex items-center gap-4 text-sm">
+                            <span className="text-gray-500">
+                              专注 <span className="font-medium text-gray-900">{formatHours(focusMinutes)}</span>
+                            </span>
+                            <span className="text-xs text-primary-500 group-hover:text-primary-700">查看详情 →</span>
+                          </div>
+                        </div>
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+                          <div
+                            className="h-full rounded-full transition-all"
+                            style={{ width: `${rate}%`, backgroundColor: tag.color }}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <h4 className="mb-3 text-sm font-semibold text-gray-700">专注时长分布</h4>
+                <div className="space-y-3">
+                  {stats.tagStats.map(({ tag, focusMinutes }) => (
+                    <div key={tag.id} className="flex items-center gap-3">
+                      <TagBadge tagId={tag.id} size="sm" />
+                      <div className="flex-1 h-6 overflow-hidden rounded-full bg-gray-100">
+                        <div
+                          className="h-full rounded-full transition-all flex items-center pl-2"
+                          style={{ width: `${Math.max((focusMinutes / maxTagFocus) * 100, focusMinutes > 0 ? 8 : 0)}%`, backgroundColor: tag.color }}
+                        >
+                          {focusMinutes > 0 && (
+                            <span className="text-xs font-medium text-white">{focusMinutes}分钟</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <div className="rounded-xl border border-gray-200 bg-white p-6">
+                <h3 className="mb-4 font-semibold text-gray-900">每日任务完成</h3>
+                <div className="flex items-end justify-between gap-2 h-40">
+                  {stats.dailyStats.map((stat, idx) => {
+                    const completedH = stat.total > 0 ? Math.max((stat.completed / stat.total) * 100, 4) : 0
+                    const pendingH = stat.total > 0 ? Math.max(((stat.total - stat.completed) / stat.total) * 100, 4) : 0
+                    const isCurrentDay = format(new Date(), 'yyyy-MM-dd') === format(stat.date, 'yyyy-MM-dd')
+                    return (
+                      <div key={idx} className="flex flex-1 flex-col items-center gap-2">
+                        <div className="flex h-full w-full flex-col items-end justify-center gap-0.5">
+                          {stat.total > 0 ? (
+                            <>
+                              <div
+                                className={cn('w-full max-w-[32px] rounded-t-sm', isCurrentDay ? 'bg-gray-400' : 'bg-gray-300')}
+                                style={{ height: `${pendingH}%` }}
+                              />
+                              <div
+                                className={cn('w-full max-w-[32px] rounded-b-sm', isCurrentDay ? 'bg-green-500' : 'bg-green-400')}
+                                style={{ height: `${completedH}%` }}
+                              />
+                            </>
+                          ) : (
+                            <div className="h-1 w-full max-w-[32px] rounded bg-gray-100" />
+                          )}
+                        </div>
+                        <span className={cn('text-xs', isCurrentDay ? 'font-semibold text-primary-600' : 'text-gray-500')}>
+                          {format(stat.date, 'd', { locale: zhCN })}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+                <div className="mt-4 flex items-center justify-center gap-4 text-xs text-gray-500">
+                  <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-green-400" /> 已完成</span>
+                  <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-gray-300" /> 未完成</span>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-6">
+                <h3 className="mb-4 font-semibold text-gray-900">每日专注时长</h3>
+                <div className="flex items-end justify-between gap-2 h-40">
+                  {stats.dailyStats.map((stat, idx) => {
+                    const h = stat.focusMinutes > 0 ? Math.max((stat.focusMinutes / stats.maxFocus) * 100, 6) : 2
+                    const isCurrentDay = format(new Date(), 'yyyy-MM-dd') === format(stat.date, 'yyyy-MM-dd')
+                    return (
+                      <div key={idx} className="flex flex-1 flex-col items-center gap-2">
+                        <div className="flex h-full w-full items-end justify-center">
+                          <div
+                            className={cn('w-full max-w-[32px] rounded-t-md', isCurrentDay ? 'bg-amber-500' : 'bg-amber-300')}
+                            style={{ height: `${h}%` }}
+                            title={`${stat.focusMinutes} 分钟`}
+                          />
+                        </div>
+                        <span className={cn('text-xs', isCurrentDay ? 'font-semibold text-primary-600' : 'text-gray-500')}>
+                          {format(stat.date, 'd', { locale: zhCN })}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+                <div className="mt-4 text-center text-xs text-gray-500">单位：分钟，最高 {stats.maxFocus} 分钟</div>
+              </div>
+            </div>
+          </>
         )}
 
         <div className="rounded-xl border border-gray-200 bg-white p-6">
@@ -372,17 +455,12 @@ export function ReviewView() {
             <div className="flex items-center gap-2">
               <PenLine size={20} className="text-primary-600" />
               <h3 className="font-semibold text-gray-900">今日回顾</h3>
-              <span className="text-sm text-gray-400">
-                {format(new Date(), 'M月d日', { locale: zhCN })}
-              </span>
+              <span className="text-sm text-gray-400">{format(new Date(), 'M月d日', { locale: zhCN })}</span>
             </div>
             {reviewSaved && (
-              <span className="flex items-center gap-1 text-sm text-green-600">
-                <Save size={14} /> 已保存
-              </span>
+              <span className="flex items-center gap-1 text-sm text-green-600"><Save size={14} /> 已保存</span>
             )}
           </div>
-
           <div className="mb-4">
             <label className="mb-2 block text-sm text-gray-600">今天感觉如何？</label>
             <div className="flex gap-3">
@@ -392,9 +470,7 @@ export function ReviewView() {
                   onClick={() => setReviewMood(value)}
                   className={cn(
                     'flex flex-col items-center gap-1 rounded-xl border-2 px-4 py-3 transition-all',
-                    reviewMood === value
-                      ? 'border-current bg-gray-50'
-                      : 'border-gray-100 hover:border-gray-200'
+                    reviewMood === value ? 'border-current bg-gray-50' : 'border-gray-100 hover:border-gray-200'
                   )}
                   style={reviewMood === value ? { borderColor: color, color } : {}}
                 >
@@ -404,11 +480,8 @@ export function ReviewView() {
               ))}
             </div>
           </div>
-
           <div className="mb-4">
-            <label className="mb-2 block text-sm text-gray-600">
-              写点什么吧... 今天做得好的、需要改进的、明天的计划
-            </label>
+            <label className="mb-2 block text-sm text-gray-600">写点什么吧... 今天做得好的、需要改进的、明天的计划</label>
             <Textarea
               placeholder="今天完成了什么？有什么收获？遇到了什么问题？明天打算怎么做？"
               value={reviewContent}
@@ -416,19 +489,15 @@ export function ReviewView() {
               rows={5}
             />
           </div>
-
           <div className="flex justify-end">
-            <Button onClick={handleSaveReview} icon={<Save size={16} />}>
-              保存回顾
-            </Button>
+            <Button onClick={handleSaveReview} icon={<Save size={16} />}>保存回顾</Button>
           </div>
         </div>
 
         {reviews.length > 0 && (
           <div className="mt-6 rounded-xl border border-gray-200 bg-white p-6">
             <h3 className="mb-4 flex items-center gap-2 font-semibold text-gray-900">
-              <Calendar size={18} className="text-primary-600" />
-              历史回顾
+              <Calendar size={18} className="text-primary-600" /> 历史回顾
             </h3>
             <div className="space-y-3">
               {reviews.slice().reverse().slice(0, 5).map((review) => {
@@ -441,12 +510,8 @@ export function ReviewView() {
                         {format(new Date(review.date), 'yyyy年M月d日 EEEE', { locale: zhCN })}
                       </span>
                       {mood && MoodIcon && (
-                        <span
-                          className="flex items-center gap-1 text-sm"
-                          style={{ color: mood.color }}
-                        >
-                          <MoodIcon size={16} />
-                          {mood.label}
+                        <span className="flex items-center gap-1 text-sm" style={{ color: mood.color }}>
+                          <MoodIcon size={16} /> {mood.label}
                         </span>
                       )}
                     </div>

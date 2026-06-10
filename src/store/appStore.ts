@@ -19,11 +19,14 @@ interface AppState {
   toggleActiveTag: (tagId: string) => void
   clearActiveTags: () => void
 
-  addTask: (task: Omit<Task, 'id' | 'createdAt' | 'completed' | 'subTasks' | 'order'>) => void
+  addTask: (task: Omit<Task, 'id' | 'createdAt' | 'completed' | 'order' | 'archived'> & { subTasks?: SubTask[] }) => void
   updateTask: (id: string, updates: Partial<Task>) => void
   deleteTask: (id: string) => void
   toggleTaskComplete: (id: string) => void
   reorderTasks: (taskIds: string[]) => void
+  batchUpdateTasks: (ids: string[], updates: Partial<Task>) => void
+  archiveTasks: (ids: string[]) => void
+  moveTaskToDate: (id: string, newDueDate: string) => void
 
   addSubTask: (taskId: string, title: string) => void
   updateSubTask: (taskId: string, subTaskId: string, updates: Partial<SubTask>) => void
@@ -57,8 +60,12 @@ const defaultTags: Tag[] = [
 function loadInitialState(): Partial<AppState> {
   const saved = storage.get<any>(STORAGE_KEY, null)
   if (saved) {
+    const tasks = (saved.tasks || []).map((t: Task) => ({
+      ...t,
+      archived: t.archived ?? false,
+    }))
     return {
-      tasks: saved.tasks || [],
+      tasks,
       tags: saved.tags?.length ? saved.tags : defaultTags,
       focusSessions: saved.focusSessions || [],
       reviews: saved.reviews || [],
@@ -86,6 +93,10 @@ function getNextOccurrence(baseDate: string, repeat: RepeatFrequency): string {
   }
 }
 
+function persist(state: any) {
+  storage.set(STORAGE_KEY, state)
+}
+
 export const useAppStore = create<AppState>((set, get) => {
   const initial = loadInitialState()
 
@@ -109,17 +120,19 @@ export const useAppStore = create<AppState>((set, get) => {
     clearActiveTags: () => set({ activeTagIds: [] }),
 
     addTask: (taskData) => {
+      const { subTasks: inputSubTasks, ...rest } = taskData
       const newTask: Task = {
-        ...taskData,
+        ...rest,
         id: generateId(),
         createdAt: new Date().toISOString(),
         completed: false,
-        subTasks: [],
+        subTasks: inputSubTasks || [],
         order: get().tasks.length,
+        archived: false,
       }
       set((state) => {
         const tasks = [...state.tasks, newTask]
-        storage.set(STORAGE_KEY, { ...state, tasks })
+        persist({ ...state, tasks })
         return { tasks }
       })
     },
@@ -127,7 +140,7 @@ export const useAppStore = create<AppState>((set, get) => {
     updateTask: (id, updates) => {
       set((state) => {
         const tasks = state.tasks.map((t) => (t.id === id ? { ...t, ...updates } : t))
-        storage.set(STORAGE_KEY, { ...state, tasks })
+        persist({ ...state, tasks })
         return { tasks }
       })
     },
@@ -135,7 +148,7 @@ export const useAppStore = create<AppState>((set, get) => {
     deleteTask: (id) => {
       set((state) => {
         const tasks = state.tasks.filter((t) => t.id !== id)
-        storage.set(STORAGE_KEY, { ...state, tasks })
+        persist({ ...state, tasks })
         return { tasks }
       })
     },
@@ -154,6 +167,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
             if (nowCompleted && t.repeat !== 'none' && t.dueDate) {
               const newDueDate = getNextOccurrence(t.dueDate, t.repeat)
+              const resetSubTasks = t.subTasks.map((st) => ({ ...st, completed: false }))
               const repeatedTask: Task = {
                 ...t,
                 id: generateId(),
@@ -161,7 +175,9 @@ export const useAppStore = create<AppState>((set, get) => {
                 completed: false,
                 completedAt: undefined,
                 dueDate: newDueDate,
+                subTasks: resetSubTasks,
                 order: state.tasks.length,
+                archived: false,
               }
               return [updated, repeatedTask]
             }
@@ -170,7 +186,7 @@ export const useAppStore = create<AppState>((set, get) => {
           return [t]
         }).flat()
 
-        storage.set(STORAGE_KEY, { ...state, tasks })
+        persist({ ...state, tasks })
         return { tasks }
       })
     },
@@ -187,7 +203,37 @@ export const useAppStore = create<AppState>((set, get) => {
             tasks.push(t)
           }
         })
-        storage.set(STORAGE_KEY, { ...state, tasks })
+        persist({ ...state, tasks })
+        return { tasks }
+      })
+    },
+
+    batchUpdateTasks: (ids, updates) => {
+      set((state) => {
+        const tasks = state.tasks.map((t) =>
+          ids.includes(t.id) ? { ...t, ...updates } : t
+        )
+        persist({ ...state, tasks })
+        return { tasks }
+      })
+    },
+
+    archiveTasks: (ids) => {
+      set((state) => {
+        const tasks = state.tasks.map((t) =>
+          ids.includes(t.id) ? { ...t, archived: true } : t
+        )
+        persist({ ...state, tasks })
+        return { tasks }
+      })
+    },
+
+    moveTaskToDate: (id, newDueDate) => {
+      set((state) => {
+        const tasks = state.tasks.map((t) =>
+          t.id === id ? { ...t, dueDate: newDueDate } : t
+        )
+        persist({ ...state, tasks })
         return { tasks }
       })
     },
@@ -205,7 +251,7 @@ export const useAppStore = create<AppState>((set, get) => {
               }
             : t
         )
-        storage.set(STORAGE_KEY, { ...state, tasks })
+        persist({ ...state, tasks })
         return { tasks }
       })
     },
@@ -222,7 +268,7 @@ export const useAppStore = create<AppState>((set, get) => {
               }
             : t
         )
-        storage.set(STORAGE_KEY, { ...state, tasks })
+        persist({ ...state, tasks })
         return { tasks }
       })
     },
@@ -234,7 +280,7 @@ export const useAppStore = create<AppState>((set, get) => {
             ? { ...t, subTasks: t.subTasks.filter((st) => st.id !== subTaskId) }
             : t
         )
-        storage.set(STORAGE_KEY, { ...state, tasks })
+        persist({ ...state, tasks })
         return { tasks }
       })
     },
@@ -243,7 +289,7 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => {
         const tag: Tag = { id: generateId(), name, color }
         const tags = [...state.tags, tag]
-        storage.set(STORAGE_KEY, { ...state, tags })
+        persist({ ...state, tags })
         return { tags }
       })
     },
@@ -251,7 +297,7 @@ export const useAppStore = create<AppState>((set, get) => {
     updateTag: (id, updates) => {
       set((state) => {
         const tags = state.tags.map((t) => (t.id === id ? { ...t, ...updates } : t))
-        storage.set(STORAGE_KEY, { ...state, tags })
+        persist({ ...state, tags })
         return { tags }
       })
     },
@@ -264,7 +310,7 @@ export const useAppStore = create<AppState>((set, get) => {
           tagIds: t.tagIds.filter((tid) => tid !== id),
         }))
         const activeTagIds = state.activeTagIds.filter((tid) => tid !== id)
-        storage.set(STORAGE_KEY, { ...state, tags, tasks })
+        persist({ ...state, tags, tasks })
         return { tags, tasks, activeTagIds }
       })
     },
@@ -275,7 +321,7 @@ export const useAppStore = create<AppState>((set, get) => {
           ...state.focusSessions,
           { ...session, id: generateId() },
         ]
-        storage.set(STORAGE_KEY, { ...state, focusSessions })
+        persist({ ...state, focusSessions })
         return { focusSessions }
       })
     },
@@ -285,7 +331,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const focusSessions = state.focusSessions.map((s) =>
           s.id === id ? { ...s, ...updates } : s
         )
-        storage.set(STORAGE_KEY, { ...state, focusSessions })
+        persist({ ...state, focusSessions })
         return { focusSessions }
       })
     },
@@ -304,7 +350,7 @@ export const useAppStore = create<AppState>((set, get) => {
             { ...review, createdAt: new Date().toISOString() },
           ]
         }
-        storage.set(STORAGE_KEY, { ...state, reviews })
+        persist({ ...state, reviews })
         return { reviews }
       })
     },
@@ -314,7 +360,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const reviews = state.reviews.map((r) =>
           r.date === date ? { ...r, ...updates } : r
         )
-        storage.set(STORAGE_KEY, { ...state, reviews })
+        persist({ ...state, reviews })
         return { reviews }
       })
     },
@@ -323,6 +369,7 @@ export const useAppStore = create<AppState>((set, get) => {
       const state = get()
       return state.tasks
         .filter((t) => {
+          if (t.archived) return false
           if (t.completed) return t.completedAt ? isToday(new Date(t.completedAt)) : false
           if (!t.dueDate) return true
           return isToday(new Date(t.dueDate))
@@ -332,12 +379,13 @@ export const useAppStore = create<AppState>((set, get) => {
 
     getOverdueTasks: () => {
       const state = get()
-      return state.tasks.filter((t) => !t.completed && isOverdue(t.dueDate))
+      return state.tasks.filter((t) => !t.archived && !t.completed && isOverdue(t.dueDate))
     },
 
     getTasksByDate: (date) => {
       const state = get()
       return state.tasks.filter((t) => {
+        if (t.archived) return false
         if (t.completed) {
           return t.completedAt ? isSameDate(t.completedAt, date) : false
         }
@@ -349,6 +397,7 @@ export const useAppStore = create<AppState>((set, get) => {
     getFilteredTasks: () => {
       const state = get()
       return state.tasks.filter((t) => {
+        if (t.archived) return false
         if (state.searchQuery) {
           const q = state.searchQuery.toLowerCase()
           if (

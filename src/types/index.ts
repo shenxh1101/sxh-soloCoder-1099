@@ -27,6 +27,7 @@ export interface Task {
   repeat: RepeatFrequency
   subTasks: SubTask[]
   order: number
+  archived: boolean
 }
 
 export interface FocusSession {

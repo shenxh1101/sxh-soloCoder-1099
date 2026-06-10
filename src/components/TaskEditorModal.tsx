@@ -94,9 +94,8 @@ export function TaskEditorModal({ open, onClose, editTask, defaultDueDate }: Tas
         dueDate: dueDate ? new Date(dueDate).toISOString() : undefined,
         tagIds,
         repeat,
+        subTasks,
       })
-      if (subTasks.length > 0) {
-      }
     }
     onClose()
   }
