@@ -36,6 +36,8 @@ export function TasksView() {
   const showToast = useAppStore((s) => s.showToast)
   const taskFilterOverride = useAppStore((s) => s.taskFilterOverride)
   const setTaskFilterOverride = useAppStore((s) => s.setTaskFilterOverride)
+  const filterSuspended = useAppStore((s) => s.filterSuspended)
+  const restoreFilters = useAppStore((s) => s.restoreFilters)
 
   useEffect(() => {
     if (taskFilterOverride) {
@@ -162,15 +164,25 @@ export function TasksView() {
               共 {tasks.length} 个任务 · 进行中 {pendingCount} · 已完成 {completedCount}
             </p>
           </div>
-          <div className="flex gap-2">
-            {!showBatchBar && (
-              <Button variant="secondary" onClick={handleEnterBatchMode} icon={<ListTodo size={16} />}>
-                批量管理
-              </Button>
+          <div className="flex flex-col items-end gap-2">
+            {filterSuspended && (
+              <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5">
+                <span className="text-xs text-amber-700">已临时收起搜索/标签筛选</span>
+                <Button size="sm" variant="secondary" onClick={restoreFilters}>
+                  恢复筛选
+                </Button>
+              </div>
             )}
-            <Button onClick={() => { setEditingTask(null); setShowEditor(true) }} icon={<Plus size={18} />}>
-              新建任务
-            </Button>
+            <div className="flex gap-2">
+              {!showBatchBar && (
+                <Button variant="secondary" onClick={handleEnterBatchMode} icon={<ListTodo size={16} />}>
+                  批量管理
+                </Button>
+              )}
+              <Button onClick={() => { setEditingTask(null); setShowEditor(true) }} icon={<Plus size={18} />}>
+                新建任务
+              </Button>
+            </div>
           </div>
         </div>
 

@@ -10,7 +10,6 @@ import {
   endOfWeek,
   eachDayOfInterval,
   subWeeks,
-  addWeeks,
   isWithinInterval,
 } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
@@ -38,16 +37,23 @@ import {
   Minus,
   Eye,
   X,
+  Flag,
+  ArrowRight,
+  ArrowUpDown,
+  FileSpreadsheet,
 } from 'lucide-react'
 import type { DailyReview, Task, FocusSession } from '@/types'
 import { cn } from '@/utils/cn'
 
 const TREND_WEEKS = 4
 
+type TrendSortKey = 'completed' | 'focusMinutes' | 'completionRate'
+
 interface WeekInfo {
   label: string
   start: Date
   end: Date
+  key: string
 }
 
 function getWeekInfo(offset: number): WeekInfo {
@@ -55,7 +61,8 @@ function getWeekInfo(offset: number): WeekInfo {
   const start = startOfWeek(base, { weekStartsOn: 1 })
   const end = endOfWeek(base, { weekStartsOn: 1 })
   const label = offset === 0 ? '本周' : `${format(start, 'M/d')}-${format(end, 'M/d')}`
-  return { label, start, end }
+  const key = format(start, 'yyyyMMdd')
+  return { label, start, end, key }
 }
 
 export function ReviewView() {
@@ -66,12 +73,18 @@ export function ReviewView() {
   const [drillTagId, setDrillTagId] = useState<string | null>(null)
   const [showTrend, setShowTrend] = useState(true)
   const [showPreview, setShowPreview] = useState(false)
+  const [trendSort, setTrendSort] = useState<TrendSortKey>('completed')
+  const [weekGoals, setWeekGoals] = useState('')
+  const [nextWeekPlan, setNextWeekPlan] = useState('')
+  const [noteSaved, setNoteSaved] = useState(false)
 
   const tasks = useAppStore((s) => s.tasks)
   const tags = useAppStore((s) => s.tags)
   const focusSessions = useAppStore((s) => s.focusSessions)
   const reviews = useAppStore((s) => s.reviews)
+  const weeklyNotes = useAppStore((s) => s.weeklyNotes)
   const addReview = useAppStore((s) => s.addReview)
+  const updateWeeklyNote = useAppStore((s) => s.updateWeeklyNote)
   const reviewFocusDate = useAppStore((s) => s.reviewFocusDate)
   const showToast = useAppStore((s) => s.showToast)
   const setReviewFocusDate = useAppStore((s) => s.setReviewFocusDate)
@@ -93,6 +106,12 @@ export function ReviewView() {
   }, [reviewFocusDate, setReviewFocusDate])
 
   const currentWeek = useMemo(() => getWeekInfo(weekOffset), [weekOffset])
+
+  useEffect(() => {
+    const note = weeklyNotes[currentWeek.key]
+    setWeekGoals(note?.weekGoals || '')
+    setNextWeekPlan(note?.nextWeekPlan || '')
+  }, [currentWeek.key, weeklyNotes])
 
   const dateRange = useMemo(() => ({
     start: currentWeek.start,
@@ -142,15 +161,25 @@ export function ReviewView() {
       label: string
       start: Date
       end: Date
-      tagStats: { tagId: string; tagName: string; color: string; completed: number; focusMinutes: number; tasks: Task[]; sessions: FocusSession[] }[]
+      key: string
+      tagStats: { tagId: string; tagName: string; color: string; completed: number; total: number; focusMinutes: number; tasks: Task[]; sessions: FocusSession[] }[]
     }[] = []
 
     for (let i = TREND_WEEKS - 1; i >= 0; i--) {
       const wi = getWeekInfo(i + weekOffset)
       const weekStart = wi.start
       const weekEnd = wi.end
-      const label = wi.label
-
+      const weekAllTasks = tasks.filter((t) => {
+        if (t.dueDate) {
+          const d = new Date(t.dueDate)
+          return d >= weekStart && d <= weekEnd
+        }
+        if (t.completed && t.completedAt) {
+          const d = new Date(t.completedAt)
+          return d >= weekStart && d <= weekEnd
+        }
+        return false
+      })
       const weekSessions = focusSessions.filter(
         (s) =>
           s.type === 'focus' &&
@@ -166,18 +195,21 @@ export function ReviewView() {
       )
 
       const tagStats = tags.map((tag) => {
+        const tagAll = weekAllTasks.filter((t) => t.tagIds.includes(tag.id))
         const tagTasks = weekCompleted.filter((t) => t.tagIds.includes(tag.id))
         const tagSessions = weekSessions.filter((s) => {
           const task = tasks.find((t) => t.id === s.taskId)
           return task?.tagIds.includes(tag.id)
         })
         const completed = tagTasks.length
+        const total = tagAll.length
         const focusMinutes = tagSessions.reduce((acc, s) => acc + Math.round(s.duration / 60), 0)
         return {
           tagId: tag.id,
           tagName: tag.name,
           color: tag.color,
           completed,
+          total,
           focusMinutes,
           tasks: tagTasks,
           sessions: tagSessions,
@@ -196,6 +228,7 @@ export function ReviewView() {
           tagName: '未分类',
           color: '#9ca3af',
           completed: 0,
+          total: 0,
           focusMinutes: uncategorizedFocus,
           tasks: [],
           sessions: uncategorizedSessions,
@@ -203,9 +236,10 @@ export function ReviewView() {
       }
 
       weeks.push({
-        label,
+        label: wi.label,
         start: weekStart,
         end: weekEnd,
+        key: wi.key,
         tagStats: tagStats.filter((s) => s.completed > 0 || s.focusMinutes > 0),
       })
     }
@@ -228,7 +262,15 @@ export function ReviewView() {
           return task?.tagIds.includes(tag.id)
         })
         const tagFocusMinutes = tagSessions.reduce((acc, s) => acc + Math.round(s.duration / 60), 0)
-        return { tag, total: tagTasks.length, completed: completedTagTasks, focusMinutes: tagFocusMinutes, tasks: tagTasks, sessions: tagSessions }
+        return {
+          tag,
+          total: tagTasks.length,
+          completed: completedTagTasks,
+          focusMinutes: tagFocusMinutes,
+          completionRate: tagTasks.length > 0 ? Math.round((completedTagTasks / tagTasks.length) * 100) : 0,
+          tasks: tagTasks,
+          sessions: tagSessions,
+        }
       })
       .filter((s) => s.total > 0 || s.focusMinutes > 0)
 
@@ -244,6 +286,7 @@ export function ReviewView() {
         total: 0,
         completed: 0,
         focusMinutes: uncategorizedFocus,
+        completionRate: 0,
         tasks: [],
         sessions: uncategorizedSessions,
       })
@@ -277,17 +320,33 @@ export function ReviewView() {
     if (!drillTagId) return []
     return weeklyTrends.map((w) => {
       const ts = w.tagStats.find((s) => s.tagId === drillTagId)
+      const total = ts?.total ?? 0
+      const completed = ts?.completed ?? 0
       return {
         label: w.label,
         start: w.start,
         end: w.end,
-        completed: ts?.completed ?? 0,
+        completed,
+        total,
+        completionRate: total > 0 ? Math.round((completed / total) * 100) : 0,
         focusMinutes: ts?.focusMinutes ?? 0,
         tasks: ts?.tasks ?? [],
         sessions: ts?.sessions ?? [],
       }
     })
   }, [drillTagId, weeklyTrends])
+
+  const sortedDrillWeeklyData = useMemo(() => {
+    const data = [...drillWeeklyData]
+    switch (trendSort) {
+      case 'completed':
+        return data.sort((a, b) => b.completed - a.completed)
+      case 'focusMinutes':
+        return data.sort((a, b) => b.focusMinutes - a.focusMinutes)
+      case 'completionRate':
+        return data.sort((a, b) => b.completionRate - a.completionRate)
+    }
+  }, [drillWeeklyData, trendSort])
 
   const moodEmojis: { value: NonNullable<DailyReview['mood']>; label: string; icon: any; color: string }[] = [
     { value: 'great', label: '很棒', icon: Laugh, color: '#10b981' },
@@ -300,6 +359,13 @@ export function ReviewView() {
     addReview({ date: getTodayStr(), content: reviewContent, mood: reviewMood })
     setReviewSaved(true)
     setTimeout(() => setReviewSaved(false), 2000)
+  }
+
+  const handleSaveWeeklyNote = () => {
+    updateWeeklyNote(currentWeek.key, { weekGoals, nextWeekPlan })
+    setNoteSaved(true)
+    setTimeout(() => setNoteSaved(false), 2000)
+    showToast('已保存周目标和下周计划')
   }
 
   const formatHours = (minutes: number) => {
@@ -317,6 +383,13 @@ export function ReviewView() {
     const lines: string[] = []
     lines.push(`# 周报复盘（${weekStart} - ${weekEnd}）`)
     lines.push('')
+
+    if (weekGoals.trim()) {
+      lines.push('## 周目标')
+      lines.push(weekGoals.trim())
+      lines.push('')
+    }
+
     lines.push('## 概览')
     lines.push(`- 完成任务：**${stats.completedCount}** / ${stats.totalCount} 个（完成率 ${stats.completionRate}%）`)
     lines.push(`- 专注番茄：**${stats.pomodoroCount}** 个，累计 ${formatHours(stats.totalFocusMinutes)}`)
@@ -373,8 +446,14 @@ export function ReviewView() {
         })
     }
 
+    if (nextWeekPlan.trim()) {
+      lines.push('## 下周计划')
+      lines.push(nextWeekPlan.trim())
+      lines.push('')
+    }
+
     return lines.join('\n')
-  }, [dateRange, stats, periodTasks, periodFocus, periodReviews, tags, tasks, moodEmojis])
+  }, [dateRange, stats, periodTasks, periodFocus, periodReviews, tags, tasks, moodEmojis, weekGoals, nextWeekPlan])
 
   const handleCopyMarkdown = async () => {
     const md = generateMarkdown()
@@ -398,6 +477,28 @@ export function ReviewView() {
     showToast('已下载 Markdown 文件')
   }
 
+  const handleExportTrendCSV = () => {
+    if (!drillData) return
+    const headers = ['周', '总任务', '已完成', '完成率', '专注时长(分钟)', '专注时长']
+    const rows = drillWeeklyData.map((w) => [
+      w.label,
+      String(w.total),
+      String(w.completed),
+      `${w.completionRate}%`,
+      String(w.focusMinutes),
+      formatHours(w.focusMinutes),
+    ])
+    const csv = [headers, ...rows].map((r) => r.join(',')).join('\n')
+    const blob = new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${drillData.tag.name}-趋势明细-${format(new Date(), 'yyyyMMdd')}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+    showToast('已导出趋势明细 CSV')
+  }
+
   const renderTrendIcon = (delta: number) => {
     if (delta > 0) return <TrendingUp size={12} className="text-green-500" />
     if (delta < 0) return <TrendingDown size={12} className="text-red-500" />
@@ -405,6 +506,12 @@ export function ReviewView() {
   }
 
   const markdownPreview = useMemo(() => generateMarkdown(), [generateMarkdown])
+
+  const sortOptions: { key: TrendSortKey; label: string }[] = [
+    { key: 'completed', label: '完成数' },
+    { key: 'focusMinutes', label: '专注时长' },
+    { key: 'completionRate', label: '完成率' },
+  ]
 
   return (
     <div className="h-full overflow-y-auto p-6">
@@ -456,6 +563,39 @@ export function ReviewView() {
           </div>
         </div>
 
+        <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <div className="rounded-xl border border-gray-200 bg-white p-6">
+            <div className="mb-3 flex items-center gap-2">
+              <Flag size={18} className="text-primary-600" />
+              <h3 className="font-semibold text-gray-900">周目标</h3>
+              {noteSaved && <Save size={14} className="text-green-600" />}
+            </div>
+            <Textarea
+              placeholder="这一周的目标是什么？想完成哪些事情？"
+              value={weekGoals}
+              onChange={(e) => setWeekGoals(e.target.value)}
+              rows={4}
+            />
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-white p-6">
+            <div className="mb-3 flex items-center gap-2">
+              <ArrowRight size={18} className="text-green-600" />
+              <h3 className="font-semibold text-gray-900">下周计划</h3>
+            </div>
+            <Textarea
+              placeholder="下周要做什么？有什么优先级安排？"
+              value={nextWeekPlan}
+              onChange={(e) => setNextWeekPlan(e.target.value)}
+              rows={4}
+            />
+          </div>
+        </div>
+        <div className="mb-6 flex justify-end -mt-4">
+          <Button size="sm" variant="secondary" onClick={handleSaveWeeklyNote} icon={<Save size={14} />}>
+            保存目标与计划
+          </Button>
+        </div>
+
         <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
           <div className="rounded-xl border border-gray-200 bg-white p-5">
             <div className="flex items-center gap-2 text-gray-500">
@@ -502,7 +642,7 @@ export function ReviewView() {
 
         {drillData ? (
           <div className="mb-6 rounded-xl border border-gray-200 bg-white p-6">
-            <div className="mb-4 flex items-center gap-3">
+            <div className="mb-4 flex items-center gap-3 flex-wrap">
               <button onClick={() => setDrillTagId(null)} className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100">
                 <ArrowLeft size={20} />
               </button>
@@ -512,27 +652,48 @@ export function ReviewView() {
               <span className="text-sm text-gray-500">
                 {drillData.completed}/{drillData.total} 完成 · {formatHours(drillData.focusMinutes)} 专注
               </span>
+              <Button size="sm" variant="secondary" onClick={handleExportTrendCSV} icon={<FileSpreadsheet size={14} />}>
+                导出明细
+              </Button>
             </div>
 
             {showTrend && (
               <div className="mb-6 rounded-lg bg-gray-50 p-4">
-                <div className="mb-3 flex items-center justify-between">
+                <div className="mb-3 flex items-center justify-between flex-wrap gap-2">
                   <h4 className="text-sm font-semibold text-gray-700">
                     最近 {TREND_WEEKS} 周趋势
                   </h4>
-                  <button
-                    onClick={() => setShowTrend(false)}
-                    className="text-xs text-gray-500 hover:text-gray-700"
-                  >
-                    收起
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 rounded-lg bg-white border border-gray-200 px-2 py-1">
+                      <ArrowUpDown size={12} className="text-gray-400" />
+                      {sortOptions.map((opt) => (
+                        <button
+                          key={opt.key}
+                          onClick={() => setTrendSort(opt.key)}
+                          className={cn(
+                            'rounded-md px-2 py-0.5 text-xs font-medium transition-colors',
+                            trendSort === opt.key ? 'bg-primary-100 text-primary-700' : 'text-gray-500 hover:text-gray-700'
+                          )}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => setShowTrend(false)}
+                      className="text-xs text-gray-500 hover:text-gray-700"
+                    >
+                      收起
+                    </button>
+                  </div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="text-xs text-gray-500">
                         <th className="pb-2 text-left font-normal">周</th>
-                        <th className="pb-2 text-right font-normal">完成任务</th>
+                        <th className="pb-2 text-right font-normal">完成/总数</th>
+                        <th className="pb-2 text-right font-normal">完成率</th>
                         <th className="pb-2 text-right font-normal">专注时长</th>
                         <th className="pb-2 text-right font-normal">环比</th>
                       </tr>
@@ -544,11 +705,19 @@ export function ReviewView() {
                           ? weeklyTrends[idx - 1].tagStats.find((s) => s.tagId === drillData.tag.id)
                           : null
                         const delta = ts && prev ? ts.completed - prev.completed : 0
+                        const completed = ts?.completed ?? 0
+                        const total = ts?.total ?? 0
+                        const rate = total > 0 ? Math.round((completed / total) * 100) : 0
                         return (
                           <tr key={w.label} className="border-t border-gray-100">
                             <td className="py-2 text-gray-700">{w.label}</td>
-                            <td className="py-2 text-right text-gray-900 font-medium">
-                              {ts?.completed ?? 0}
+                            <td className="py-2 text-right font-medium text-gray-900">
+                              {completed}/{total}
+                            </td>
+                            <td className="py-2 text-right">
+                              <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
+                                {rate}%
+                              </span>
                             </td>
                             <td className="py-2 text-right text-gray-700">
                               {formatHours(ts?.focusMinutes ?? 0)}
@@ -572,18 +741,22 @@ export function ReviewView() {
                 </div>
 
                 <div className="mt-4">
-                  <h5 className="mb-2 text-xs font-semibold text-gray-600">每周任务与专注</h5>
+                  <h5 className="mb-2 text-xs font-semibold text-gray-600">每周任务与专注明细</h5>
                   <div className="space-y-3">
-                    {drillWeeklyData.map((week) => (
+                    {sortedDrillWeeklyData.map((week) => (
                       <div key={week.label} className="rounded-lg border border-gray-100 bg-white p-3">
-                        <div className="mb-2 flex items-center justify-between">
+                        <div className="mb-2 flex items-center justify-between flex-wrap gap-2">
                           <span className="text-xs font-medium text-gray-700">{week.label}</span>
                           <span className="text-xs text-gray-500">
-                            完成 {week.completed} · 专注 {formatHours(week.focusMinutes)}
+                            完成 {week.completed}/{week.total} · 完成率 {week.completionRate}% · 专注 {formatHours(week.focusMinutes)}
                           </span>
                         </div>
                         {week.tasks.length === 0 && week.sessions.length === 0 ? (
-                          <p className="text-xs text-gray-400 italic">暂无数据</p>
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 h-8 rounded-md border-2 border-dashed border-gray-200 flex items-center justify-center">
+                              <p className="text-xs text-gray-400 italic">本周暂无数据</p>
+                            </div>
+                          </div>
                         ) : (
                           <>
                             {week.tasks.length > 0 && (
@@ -673,7 +846,7 @@ export function ReviewView() {
               <div className="mb-6 rounded-xl border border-gray-200 bg-white p-6">
                 <h3 className="mb-4 font-semibold text-gray-900">按标签分类</h3>
                 <div className="mb-6 space-y-4">
-                  {stats.tagStats.map(({ tag, total, completed, focusMinutes }) => {
+                  {stats.tagStats.map(({ tag, total, completed, focusMinutes, completionRate }) => {
                     const rate = total > 0 ? Math.round((completed / total) * 100) : 0
                     return (
                       <div
@@ -681,7 +854,7 @@ export function ReviewView() {
                         className="group cursor-pointer rounded-xl border border-gray-100 p-4 transition-all hover:border-gray-200 hover:shadow-sm"
                         onClick={() => setDrillTagId(tag.id)}
                       >
-                        <div className="mb-2 flex items-center justify-between">
+                        <div className="mb-2 flex items-center justify-between flex-wrap gap-2">
                           <div className="flex items-center gap-2">
                             <TagBadge tagId={tag.id} size="md" />
                             <span className="text-sm text-gray-500">{total} 个任务 · 完成 {rate}%</span>

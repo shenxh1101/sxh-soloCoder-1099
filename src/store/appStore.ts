@@ -3,7 +3,17 @@ import type { Task, Tag, FocusSession, DailyReview, SubTask, Priority, RepeatFre
 import { storage } from '@/utils/storage'
 import { generateId } from '@/utils/cn'
 import { isSameDate, getTodayStr, isOverdue } from '@/utils/date'
-import { addDays, addWeeks, addMonths, isToday } from 'date-fns'
+import { addDays, addWeeks, addMonths, isToday, format } from 'date-fns'
+
+interface WeeklyNote {
+  weekGoals: string
+  nextWeekPlan: string
+}
+
+interface SavedFilterState {
+  searchQuery: string
+  activeTagIds: string[]
+}
 
 interface AppState {
   currentView: ViewType
@@ -11,11 +21,14 @@ interface AppState {
   tags: Tag[]
   focusSessions: FocusSession[]
   reviews: DailyReview[]
+  weeklyNotes: Record<string, WeeklyNote>
   searchQuery: string
   activeTagIds: string[]
   highlightedTaskId: string | null
   reviewFocusDate: string | null
   taskFilterOverride: boolean
+  savedFilter: SavedFilterState | null
+  filterSuspended: boolean
   toast: { message: string; type: 'success' | 'info' } | null
 
   setCurrentView: (view: ViewType) => void
@@ -25,6 +38,9 @@ interface AppState {
   setHighlightedTaskId: (id: string | null) => void
   setReviewFocusDate: (date: string | null) => void
   setTaskFilterOverride: (v: boolean) => void
+  suspendFilters: () => void
+  restoreFilters: () => void
+  updateWeeklyNote: (weekKey: string, patch: Partial<WeeklyNote>) => void
   showToast: (message: string, type?: 'success' | 'info') => void
   clearToast: () => void
 
@@ -78,6 +94,7 @@ function loadInitialState(): Partial<AppState> {
       tags: saved.tags?.length ? saved.tags : defaultTags,
       focusSessions: saved.focusSessions || [],
       reviews: saved.reviews || [],
+      weeklyNotes: saved.weeklyNotes || {},
     }
   }
   return {
@@ -85,6 +102,7 @@ function loadInitialState(): Partial<AppState> {
     tags: defaultTags,
     focusSessions: [],
     reviews: [],
+    weeklyNotes: {},
   }
 }
 
@@ -108,6 +126,7 @@ function persist(state: any) {
     tags: state.tags,
     focusSessions: state.focusSessions,
     reviews: state.reviews,
+    weeklyNotes: state.weeklyNotes,
   })
 }
 
@@ -120,11 +139,14 @@ export const useAppStore = create<AppState>((set, get) => {
     tags: initial.tags || defaultTags,
     focusSessions: initial.focusSessions || [],
     reviews: initial.reviews || [],
+    weeklyNotes: initial.weeklyNotes || {},
     searchQuery: '',
     activeTagIds: [],
     highlightedTaskId: null,
     reviewFocusDate: null,
     taskFilterOverride: false,
+    savedFilter: null,
+    filterSuspended: false,
     toast: null,
 
     setCurrentView: (view) => set({ currentView: view }),
@@ -139,6 +161,40 @@ export const useAppStore = create<AppState>((set, get) => {
     setHighlightedTaskId: (id) => set({ highlightedTaskId: id }),
     setReviewFocusDate: (date) => set({ reviewFocusDate: date }),
     setTaskFilterOverride: (v) => set({ taskFilterOverride: v }),
+
+    suspendFilters: () => {
+      const s = get()
+      set({
+        savedFilter: { searchQuery: s.searchQuery, activeTagIds: [...s.activeTagIds] },
+        searchQuery: '',
+        activeTagIds: [],
+        filterSuspended: true,
+      })
+    },
+
+    restoreFilters: () => {
+      const s = get()
+      if (s.savedFilter) {
+        set({
+          searchQuery: s.savedFilter.searchQuery,
+          activeTagIds: s.savedFilter.activeTagIds,
+          savedFilter: null,
+          filterSuspended: false,
+        })
+      }
+    },
+
+    updateWeeklyNote: (weekKey, patch) => {
+      set((state) => {
+        const weeklyNotes = {
+          ...state.weeklyNotes,
+          [weekKey]: { ...(state.weeklyNotes[weekKey] || { weekGoals: '', nextWeekPlan: '' }), ...patch },
+        }
+        persist({ ...state, weeklyNotes })
+        return { weeklyNotes }
+      })
+    },
+
     showToast: (message, type = 'success') => {
       set({ toast: { message, type } })
       setTimeout(() => set({ toast: null }), 2500)
@@ -268,9 +324,23 @@ export const useAppStore = create<AppState>((set, get) => {
 
     moveTaskToDate: (id, newDueDate) => {
       set((state) => {
-        const tasks = state.tasks.map((t) =>
-          t.id === id ? { ...t, dueDate: newDueDate } : t
-        )
+        const tasks = state.tasks.map((t) => {
+          if (t.id !== id) return t
+          const updates: Partial<Task> = { dueDate: newDueDate }
+          if (t.completed) {
+            const old = t.completedAt ? new Date(t.completedAt) : null
+            const nd = new Date(newDueDate)
+            if (old) {
+              old.setFullYear(nd.getFullYear())
+              old.setMonth(nd.getMonth())
+              old.setDate(nd.getDate())
+              updates.completedAt = old.toISOString()
+            } else {
+              updates.completedAt = new Date(newDueDate).toISOString()
+            }
+          }
+          return { ...t, ...updates }
+        })
         persist({ ...state, tasks })
         return { tasks }
       })

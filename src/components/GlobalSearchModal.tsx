@@ -33,6 +33,7 @@ export function GlobalSearchModal({ open, onClose }: SearchModalProps) {
   const setHighlightedTaskId = useAppStore((s) => s.setHighlightedTaskId)
   const setReviewFocusDate = useAppStore((s) => s.setReviewFocusDate)
   const setTaskFilterOverride = useAppStore((s) => s.setTaskFilterOverride)
+  const suspendFilters = useAppStore((s) => s.suspendFilters)
 
   useEffect(() => {
     if (open) {
@@ -91,9 +92,9 @@ export function GlobalSearchModal({ open, onClose }: SearchModalProps) {
   }, [results, selectedIndex])
 
   const handleSelect = (result: SearchResult) => {
-    clearActiveTags()
     setSearchQuery('')
     if (result.type === 'task') {
+      suspendFilters()
       setHighlightedTaskId(result.id)
       setTaskFilterOverride(true)
       setTimeout(() => {
