@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useAppStore } from '@/store/appStore'
 import { TaskCard } from '@/components/TaskCard'
 import { TaskEditorModal } from '@/components/TaskEditorModal'
@@ -34,6 +34,15 @@ export function TasksView() {
   const batchUpdateTasks = useAppStore((s) => s.batchUpdateTasks)
   const archiveTasks = useAppStore((s) => s.archiveTasks)
   const showToast = useAppStore((s) => s.showToast)
+  const taskFilterOverride = useAppStore((s) => s.taskFilterOverride)
+  const setTaskFilterOverride = useAppStore((s) => s.setTaskFilterOverride)
+
+  useEffect(() => {
+    if (taskFilterOverride) {
+      setFilterStatus('all')
+      setTaskFilterOverride(false)
+    }
+  }, [taskFilterOverride, setTaskFilterOverride])
 
   const priorityWeight: Record<Priority, number> = { high: 3, medium: 2, low: 1 }
 

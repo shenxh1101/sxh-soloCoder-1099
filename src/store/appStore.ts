@@ -15,6 +15,7 @@ interface AppState {
   activeTagIds: string[]
   highlightedTaskId: string | null
   reviewFocusDate: string | null
+  taskFilterOverride: boolean
   toast: { message: string; type: 'success' | 'info' } | null
 
   setCurrentView: (view: ViewType) => void
@@ -23,6 +24,7 @@ interface AppState {
   clearActiveTags: () => void
   setHighlightedTaskId: (id: string | null) => void
   setReviewFocusDate: (date: string | null) => void
+  setTaskFilterOverride: (v: boolean) => void
   showToast: (message: string, type?: 'success' | 'info') => void
   clearToast: () => void
 
@@ -122,6 +124,7 @@ export const useAppStore = create<AppState>((set, get) => {
     activeTagIds: [],
     highlightedTaskId: null,
     reviewFocusDate: null,
+    taskFilterOverride: false,
     toast: null,
 
     setCurrentView: (view) => set({ currentView: view }),
@@ -135,6 +138,7 @@ export const useAppStore = create<AppState>((set, get) => {
     clearActiveTags: () => set({ activeTagIds: [] }),
     setHighlightedTaskId: (id) => set({ highlightedTaskId: id }),
     setReviewFocusDate: (date) => set({ reviewFocusDate: date }),
+    setTaskFilterOverride: (v) => set({ taskFilterOverride: v }),
     showToast: (message, type = 'success') => {
       set({ toast: { message, type } })
       setTimeout(() => set({ toast: null }), 2500)

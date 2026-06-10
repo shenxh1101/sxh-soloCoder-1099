@@ -156,6 +156,7 @@ export function CalendarView() {
   const getTasksByDate = useAppStore((s) => s.getTasksByDate)
   const tasks = useAppStore((s) => s.tasks)
   const moveTaskToDate = useAppStore((s) => s.moveTaskToDate)
+  const showToast = useAppStore((s) => s.showToast)
 
   const calendarDays = useMemo(() => {
     const start = startOfWeek(startOfMonth(currentMonth), { weekStartsOn: 0 })
@@ -183,7 +184,12 @@ export function CalendarView() {
     const targetDate = String(over.id).replace('date-', '')
 
     if (taskId && targetDate) {
+      const task = tasks.find((t) => t.id === taskId)
       moveTaskToDate(taskId, new Date(targetDate).toISOString())
+      if (task) {
+        const dateLabel = format(new Date(targetDate), 'M月d日', { locale: zhCN })
+        showToast(`已将「${task.title}」改期至 ${dateLabel}`)
+      }
     }
   }
 

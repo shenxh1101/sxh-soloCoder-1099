@@ -32,6 +32,7 @@ export function GlobalSearchModal({ open, onClose }: SearchModalProps) {
   const clearActiveTags = useAppStore((s) => s.clearActiveTags)
   const setHighlightedTaskId = useAppStore((s) => s.setHighlightedTaskId)
   const setReviewFocusDate = useAppStore((s) => s.setReviewFocusDate)
+  const setTaskFilterOverride = useAppStore((s) => s.setTaskFilterOverride)
 
   useEffect(() => {
     if (open) {
@@ -94,13 +95,14 @@ export function GlobalSearchModal({ open, onClose }: SearchModalProps) {
     setSearchQuery('')
     if (result.type === 'task') {
       setHighlightedTaskId(result.id)
+      setTaskFilterOverride(true)
       setTimeout(() => {
         const el = document.getElementById(`task-${result.id}`)
         if (el) {
           el.scrollIntoView({ behavior: 'smooth', block: 'center' })
         }
         setTimeout(() => setHighlightedTaskId(null), 2500)
-      }, 100)
+      }, 150)
     } else if (result.type === 'review') {
       setReviewFocusDate(result.id)
       setTimeout(() => {
@@ -109,7 +111,7 @@ export function GlobalSearchModal({ open, onClose }: SearchModalProps) {
           el.scrollIntoView({ behavior: 'smooth', block: 'center' })
         }
         setTimeout(() => setReviewFocusDate(null), 2500)
-      }, 100)
+      }, 150)
     }
     setCurrentView(result.view)
     onClose()
